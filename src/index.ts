@@ -1,1 +1,1 @@
-export { Aiyso } from "./render-dom.js";
+export { Aiyso } from "./render.js";
