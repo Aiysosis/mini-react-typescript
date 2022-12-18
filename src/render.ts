@@ -1,30 +1,5 @@
-import { createDom, createTextElement } from "./render-dom.js";
-
-export interface ElementNode {
-	type: string;
-	props: Props;
-}
-
-type Props = {
-	children: ElementNode[];
-} & Record<string, any>;
-
-export function createElement(
-	type: string,
-	props: Record<string, any>,
-	...children: (ElementNode | string)[]
-): ElementNode {
-	console.log(children);
-	return {
-		type,
-		props: {
-			...props,
-			children: children.map(child =>
-				typeof child === "object" ? child : createTextElement(child)
-			),
-		},
-	};
-}
+import { ElementNode, Props } from "./createElement.js";
+import { createDom } from "./render-dom.js";
 
 //? 引入 Fiber（纤程）的概念，每个虚拟节点的渲染都通过各自的 Fiber完成，且 Fiber之间是链式调用的关系
 //? 对于某一个 Fiber,在它执行完毕后，由浏览器选择是暂停渲染还是继续下一个 Fiber
@@ -45,7 +20,7 @@ let nextUnitOfWork: Fiber = null;
 //* 这样用户就不会看到只渲染了一部分的界面
 let witRoot: Fiber = null;
 
-function render(element: ElementNode, container: HTMLElement | Text) {
+export function render(element: ElementNode, container: HTMLElement | Text) {
 	//* 设置根部的 Fiber,它唯一的孩子节点是 element，父fiber和兄弟fiber都是空
 	const rootFiber: Fiber = {
 		type: "ROOT",
@@ -146,8 +121,3 @@ function performUnitOfWork(fiber: Fiber): Fiber {
 		return null;
 	}
 }
-
-export const Aiyso = {
-	createElement,
-	render,
-};

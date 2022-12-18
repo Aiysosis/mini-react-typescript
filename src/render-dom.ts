@@ -1,4 +1,5 @@
-import { ElementNode, Fiber } from "./render.js";
+//? 平台相关的逻辑
+import { Fiber } from "./render.js";
 
 export function createDom(fiber: Fiber): HTMLElement | Text {
 	//* implement this fn
@@ -15,14 +16,4 @@ export function createDom(fiber: Fiber): HTMLElement | Text {
 	}
 
 	return dom;
-}
-
-export function createTextElement(text: string): ElementNode {
-	return {
-		type: "TEXT_ELEMENT",
-		props: {
-			nodeValue: text,
-			children: [],
-		},
-	};
 }
