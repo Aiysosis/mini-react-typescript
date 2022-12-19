@@ -1,4 +1,4 @@
-import { Aiyso } from "./index.js";
+import { Aiyso } from "../index.js";
 
 /** @jsx Aiyso.createElement */
 const element = (

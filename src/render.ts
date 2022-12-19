@@ -5,7 +5,7 @@ import { ElementNode, Props } from "./createElement.js";
 //? Fiber 也构成的树状的关系，其调用顺序为：先调用 children的 Fiber，如果没有孩子，那么调用 sibling的 Fiber
 //? 同时，每个 Fiber 还会保留对父 Fiber的引用关系，这样就可以实现回溯/退出操作
 export type Fiber = {
-	type: string;
+	type: string | FunctionComponent;
 	dom: HTMLElement | Text;
 	props: Props;
 	parent: Fiber;
@@ -14,6 +14,8 @@ export type Fiber = {
 	alternate: Fiber; //指向老的 fiber节点
 	effectTag: EffectTag;
 };
+
+type FunctionComponent = (props?: Record<string, any>) => ElementNode;
 
 export enum EffectTag {
 	UPDATE,
@@ -151,7 +153,7 @@ export function createDom(fiber: Fiber): HTMLElement | Text {
 	const dom =
 		type === "TEXT_ELEMENT"
 			? document.createTextNode(props.nodeValue)
-			: document.createElement(type);
+			: document.createElement(type as string);
 
 	for (const key in props) {
 		if (isProperty(key)) {
@@ -165,15 +167,13 @@ export function createDom(fiber: Fiber): HTMLElement | Text {
 }
 
 function performUnitOfWork(fiber: Fiber): Fiber {
-	//* add dom node
-	if (!fiber.dom) {
-		fiber.dom = createDom(fiber);
-	}
-
 	//* create new fibers
-	const children = fiber.props.children;
-	//? diff 算法
-	reconcileChildren(children, fiber);
+	const isFunctionComponent = fiber.type instanceof Function;
+	if (isFunctionComponent) {
+		updateFunctionComponent(fiber);
+	} else {
+		updateHostComponent(fiber);
+	}
 
 	//* return next unit of work
 	//? 这里的思路比较好玩：首先检查child，如果没有child则检查sibling，如果还是没有就 [退回到 parent，检查sibling].loop
@@ -189,6 +189,22 @@ function performUnitOfWork(fiber: Fiber): Fiber {
 		}
 		return null;
 	}
+}
+
+function updateFunctionComponent(fiber: Fiber) {
+	const componentRoot = (fiber.type as FunctionComponent)(fiber.props);
+
+	reconcileChildren(componentRoot.props.children, fiber);
+}
+
+function updateHostComponent(fiber: Fiber) {
+	if (!fiber.dom) {
+		fiber.dom = createDom(fiber);
+	}
+
+	const children = fiber.props.children;
+	//? diff 算法
+	reconcileChildren(children, fiber);
 }
 
 const isSameType = (element: ElementNode | null, fiber: Fiber | null) =>
