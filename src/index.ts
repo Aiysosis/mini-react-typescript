@@ -5,3 +5,5 @@ export const Aiyso = {
 	createElement,
 	render,
 };
+
+window["render"] = render;

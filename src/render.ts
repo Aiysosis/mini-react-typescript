@@ -1,5 +1,4 @@
 import { ElementNode, Props } from "./createElement.js";
-import { createDom } from "./render-dom.js";
 
 //? 引入 Fiber（纤程）的概念，每个虚拟节点的渲染都通过各自的 Fiber完成，且 Fiber之间是链式调用的关系
 //? 对于某一个 Fiber,在它执行完毕后，由浏览器选择是暂停渲染还是继续下一个 Fiber
@@ -13,8 +12,14 @@ export type Fiber = {
 	sibling: Fiber;
 	child: Fiber;
 	alternate: Fiber; //指向老的 fiber节点
-	effectTag: string;
+	effectTag: EffectTag;
 };
+
+export enum EffectTag {
+	UPDATE,
+	PLACEMENT,
+	DELETION,
+}
 
 //* 全局变量：下一个要执行的 Fiber
 let nextUnitOfWork: Fiber = null;
@@ -38,10 +43,12 @@ export function render(element: ElementNode, container: HTMLElement | Text) {
 		sibling: null,
 		child: null,
 		alternate: currentRoot,
-		effectTag: "",
+		effectTag: EffectTag.PLACEMENT, //todo chek this
 	};
 	deletions = [];
 	nextUnitOfWork = witRoot = rootFiber;
+	//? 用于调试
+	window["currentRoot"] = rootFiber;
 }
 
 function workLoop(deadline: IdleDeadline) {
@@ -68,6 +75,7 @@ requestIdleCallback(workLoop);
 
 function commitRoot() {
 	//* 此时所有fiber内部的dom都已创建完成
+	//* 先执行删除，再执行创建
 	deletions.forEach(fiber => commitWork(fiber));
 	commitWork(witRoot.child);
 	currentRoot = witRoot; //备份
@@ -79,10 +87,81 @@ function commitWork(fiber: Fiber) {
 	//最开始拿到的是根节点的 child，也就是最外层元素对应的fiber
 	//? 从上往下挂载 or 从下往上挂载？ 前者，递归
 	if (!fiber) return;
-	const parentDom = fiber.parent.dom;
-	parentDom.appendChild(fiber.dom);
+	switch (fiber.effectTag) {
+		case EffectTag.PLACEMENT:
+			placeDom(fiber);
+			break;
+		case EffectTag.DELETION:
+			deleteDom(fiber);
+			break;
+		case EffectTag.UPDATE:
+			updateDom(fiber);
+			break;
+		default:
+			throw new Error(
+				"Unexpected effectTag in @fn commitWork in @file render.ts"
+			);
+	}
 	commitWork(fiber.child);
 	commitWork(fiber.sibling);
+}
+
+function placeDom(fiber: Fiber) {
+	if (!fiber.dom) return;
+	fiber.parent.dom.appendChild(fiber.dom);
+}
+
+function deleteDom(fiber: Fiber) {
+	if (!fiber.dom) return;
+	fiber.parent.dom.removeChild(fiber.dom);
+}
+
+const isProperty = (key: string) => key !== "children";
+const isEvent = (key: string) => key.startsWith("on");
+const eventName = (name: string) => name.toLowerCase().slice(2); // onClick -> click
+
+function updateDom(fiber: Fiber) {
+	if (!fiber.dom) return;
+	const { props, alternate, dom } = fiber;
+	const prevProps = alternate.props;
+
+	//* 删除 原来有的属性现在没有了
+	for (const key in prevProps) {
+		if (isProperty(key) && !(key in props)) {
+			if (isEvent(key)) {
+				dom.removeEventListener(eventName(key), prevProps[key]);
+			} else dom[key] = "";
+		}
+	}
+
+	//* 添加 原来没有的属性现在有了
+	for (const key in props) {
+		if (isProperty(key) && !(key in prevProps)) {
+			if (isEvent(key)) {
+				dom.addEventListener(eventName(key), props[key]);
+			} else dom[key] = props[key];
+		}
+	}
+}
+
+export function createDom(fiber: Fiber): HTMLElement | Text {
+	//* implement this fn
+	const { type, props } = fiber;
+
+	const dom =
+		type === "TEXT_ELEMENT"
+			? document.createTextNode(props.nodeValue)
+			: document.createElement(type);
+
+	for (const key in props) {
+		if (isProperty(key)) {
+			if (isEvent(key)) {
+				dom.addEventListener(eventName(key), props[key]);
+			} else dom[key] = props[key];
+		}
+	}
+
+	return dom;
 }
 
 function performUnitOfWork(fiber: Fiber): Fiber {
@@ -141,7 +220,7 @@ function reconcileChildren(children: ElementNode[], fiber: Fiber) {
 				parent: fiber,
 				sibling: null,
 				alternate: oldFiber,
-				effectTag: "UPDATE", //flag
+				effectTag: EffectTag.UPDATE, //flag
 			};
 		} else {
 			//* 只要type不相同，那么就卸载老节点，放入新节点
@@ -152,21 +231,23 @@ function reconcileChildren(children: ElementNode[], fiber: Fiber) {
 				newFiber = {
 					type: child.type,
 					props: child.props,
-					dom: null,
+					dom: null, //to be set in next idle
 					parent: fiber,
-					sibling: null,
-					child: null,
-					alternate: null,
-					effectTag: "PLACEMENT",
+					sibling: null, //to be set immediately
+					child: null, //to be set in next idle
+					alternate: null, //to be set if updated
+					effectTag: EffectTag.PLACEMENT, //flag
 				};
 			}
 			if (oldFiber) {
 				//chlid == null || oldFiber.type !== child.type
 				//* 删除老节点，这里采用标记收集，然后统一删除的处理策略
-				oldFiber.effectTag = "DELETION";
+				oldFiber.effectTag = EffectTag.DELETION;
 				deletions.push(oldFiber);
 			}
 		}
+
+		if (oldFiber) oldFiber = oldFiber.sibling;
 
 		//* 将 newFiber存储到对应位置
 		if (idx === 0) {
@@ -175,6 +256,7 @@ function reconcileChildren(children: ElementNode[], fiber: Fiber) {
 			prevSibling.sibling = newFiber;
 		}
 		prevSibling = newFiber;
+
 		idx++;
 	}
 }
