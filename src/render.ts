@@ -1,3 +1,4 @@
+import { Hook, updateFunctionComponent } from "./component.js";
 import { ElementNode, Props } from "./createElement.js";
 
 //? 引入 Fiber（纤程）的概念，每个虚拟节点的渲染都通过各自的 Fiber完成，且 Fiber之间是链式调用的关系
@@ -13,9 +14,10 @@ export type Fiber = {
 	child: Fiber;
 	alternate: Fiber; //指向老的 fiber节点
 	effectTag: EffectTag;
+	hooks: Hook<any>[] | null; //只有函数式组件会有hooks
 };
 
-type FunctionComponent = (props?: Record<string, any>) => ElementNode;
+export type FunctionComponent = (props?: Record<string, any>) => ElementNode;
 
 export enum EffectTag {
 	UPDATE,
@@ -23,15 +25,19 @@ export enum EffectTag {
 	DELETION,
 }
 
-//* 全局变量：下一个要执行的 Fiber
-let nextUnitOfWork: Fiber = null;
-//* 全局变量 witRoot, 暂存没有渲染完的 根fiber,等全部渲染完成之后把整棵树一起挂到 root container上
-//* 这样用户就不会看到只渲染了一部分的界面
-let witRoot: Fiber = null;
-//* 记录当前渲染的 fiber树，用于更新
-let currentRoot: Fiber = null;
-//* 记录需要删除的fiber，用于统一删除
-let deletions: Fiber[] = null;
+export type RenderContext = {
+	nextUnitOfWork: Fiber; //下一个要执行的 Fiber
+	wipRoot: Fiber; //全局变量 wipRoot, 暂存没有渲染完的 根fiber,等全部渲染完成之后把整棵树一起挂到 root container上,这样用户就不会看到只渲染了一部分的界面
+	currentRoot: Fiber; //记录当前渲染的 fiber树，用于更新
+	deletions: Fiber[]; //记录需要删除的fiber，用于统一删除
+};
+
+export const context: RenderContext = {
+	nextUnitOfWork: null,
+	wipRoot: null,
+	currentRoot: null,
+	deletions: [],
+};
 
 export function render(element: ElementNode, container: HTMLElement | Text) {
 	//* 设置根部的 Fiber,它唯一的孩子节点是 element，父fiber和兄弟fiber都是空
@@ -44,24 +50,24 @@ export function render(element: ElementNode, container: HTMLElement | Text) {
 		parent: null,
 		sibling: null,
 		child: null,
-		alternate: currentRoot,
+		alternate: context.currentRoot,
 		effectTag: EffectTag.PLACEMENT, //todo check this
+		hooks: null,
 	};
-	deletions = [];
-	nextUnitOfWork = witRoot = rootFiber;
-	//? 用于调试
-	window["currentRoot"] = rootFiber;
+	context.nextUnitOfWork = rootFiber;
+	context.wipRoot = rootFiber;
 }
 
 function workLoop(deadline: IdleDeadline) {
+	const { nextUnitOfWork, wipRoot } = context;
 	let shouldYield = false;
 	while (nextUnitOfWork && !shouldYield) {
-		nextUnitOfWork = performUnitOfWork(nextUnitOfWork);
+		context.nextUnitOfWork = performUnitOfWork(nextUnitOfWork);
 		shouldYield = deadline.timeRemaining() < 1;
 	}
-	//* 如果全部节点都创建完毕，那么此时 witRoot == rootFiber, nextUnitOfWork == null;
-	//! 在更新时会不会导致重复挂载整棵树而带来性能问题？ -> 会，所以在commitRoot之后设置witRoot为null, 这样就解决了这个问题
-	if (!nextUnitOfWork && witRoot) {
+	//* 如果全部节点都创建完毕，那么此时 wipRoot == rootFiber, nextUnitOfWork == null;
+	//! 在更新时会不会导致重复挂载整棵树而带来性能问题？ -> 会，所以在commitRoot之后设置wipRoot为null, 这样就解决了这个问题
+	if (!nextUnitOfWork && wipRoot) {
 		commitRoot();
 	}
 
@@ -78,10 +84,11 @@ requestIdleCallback(workLoop);
 function commitRoot() {
 	//* 此时所有fiber内部的dom都已创建完成
 	//* 先执行删除，再执行创建
+	const { deletions, wipRoot } = context;
 	deletions.forEach(fiber => commitWork(fiber));
-	commitWork(witRoot.child);
-	currentRoot = witRoot; //备份
-	witRoot = null;
+	commitWork(wipRoot.child);
+	context.currentRoot = wipRoot; //备份
+	context.wipRoot = null;
 }
 
 //* 挂载和删除都在这里
@@ -146,7 +153,7 @@ function updateDom(fiber: Fiber) {
 
 	//* 添加 原来没有的属性现在有了
 	for (const key in props) {
-		if (isProperty(key) && !(key in prevProps)) {
+		if (isProperty(key)) {
 			if (isEvent(key)) {
 				dom.addEventListener(eventName(key), props[key]);
 			} else dom[key] = props[key];
@@ -199,13 +206,6 @@ function performUnitOfWork(fiber: Fiber): Fiber {
 	}
 }
 
-function updateFunctionComponent(fiber: Fiber) {
-	//* 函数式组件是不需要创建dom的，其子元素会挂载到组件的父节点上
-	const componentRoot = (fiber.type as FunctionComponent)(fiber.props);
-
-	reconcileChildren(componentRoot.props.children, fiber);
-}
-
 function updateHostComponent(fiber: Fiber) {
 	if (!fiber.dom) {
 		fiber.dom = createDom(fiber);
@@ -219,7 +219,7 @@ function updateHostComponent(fiber: Fiber) {
 const isSameType = (element: ElementNode | null, fiber: Fiber | null) =>
 	element && fiber && element.type === fiber.type;
 
-function reconcileChildren(children: ElementNode[], fiber: Fiber) {
+export function reconcileChildren(children: ElementNode[], fiber: Fiber) {
 	let oldFiber = fiber.alternate ? fiber.alternate.child : null;
 	// oldFiber 对齐 fiber的第一个孩子，之后逐个对比即可
 	// fiber -> children: [child0, child1 ...]
@@ -246,6 +246,7 @@ function reconcileChildren(children: ElementNode[], fiber: Fiber) {
 				sibling: null,
 				alternate: oldFiber,
 				effectTag: EffectTag.UPDATE, //flag
+				hooks: null,
 			};
 		} else {
 			//* 只要type不相同，那么就卸载老节点，放入新节点
@@ -262,13 +263,14 @@ function reconcileChildren(children: ElementNode[], fiber: Fiber) {
 					child: null, //to be set in next idle
 					alternate: null, //to be set if updated
 					effectTag: EffectTag.PLACEMENT, //flag
+					hooks: null,
 				};
 			}
 			if (oldFiber) {
 				//chlid == null || oldFiber.type !== child.type
 				//* 删除老节点，这里采用标记收集，然后统一删除的处理策略
 				oldFiber.effectTag = EffectTag.DELETION;
-				deletions.push(oldFiber);
+				context.deletions.push(oldFiber);
 			}
 		}
 
