@@ -45,7 +45,7 @@ export function render(element: ElementNode, container: HTMLElement | Text) {
 		sibling: null,
 		child: null,
 		alternate: currentRoot,
-		effectTag: EffectTag.PLACEMENT, //todo chek this
+		effectTag: EffectTag.PLACEMENT, //todo check this
 	};
 	deletions = [];
 	nextUnitOfWork = witRoot = rootFiber;
@@ -110,12 +110,20 @@ function commitWork(fiber: Fiber) {
 
 function placeDom(fiber: Fiber) {
 	if (!fiber.dom) return;
-	fiber.parent.dom.appendChild(fiber.dom);
+	//* 函数式组件，没有dom，所以挂载时要跳过这一层，向上寻找
+	let parent = fiber.parent;
+	while (!parent.dom) parent = parent.parent;
+
+	parent.dom.appendChild(fiber.dom);
 }
 
 function deleteDom(fiber: Fiber) {
 	if (!fiber.dom) return;
-	fiber.parent.dom.removeChild(fiber.dom);
+	//todo refactor
+	let parent = fiber.parent;
+	while (!parent.dom) parent = parent.parent;
+
+	parent.dom.removeChild(fiber.dom);
 }
 
 const isProperty = (key: string) => key !== "children";
@@ -192,6 +200,7 @@ function performUnitOfWork(fiber: Fiber): Fiber {
 }
 
 function updateFunctionComponent(fiber: Fiber) {
+	//* 函数式组件是不需要创建dom的，其子元素会挂载到组件的父节点上
 	const componentRoot = (fiber.type as FunctionComponent)(fiber.props);
 
 	reconcileChildren(componentRoot.props.children, fiber);
